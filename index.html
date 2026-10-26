@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Your Own Storage</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #0f172a; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background: #1e293b; padding: 25px; border-radius: 10px; width: 450px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        input, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: none; box-sizing: border-box; }
+        input { background: #334155; color: #fff; }
+        button { background: #3b82f6; color: #fff; font-weight: bold; cursor: pointer; }
+        button:hover { background: #2563eb; }
+        .hidden { display: none; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; border-color: #444; font-size: 13px; }
+        th, td { border: 1px solid #444; padding: 8px; text-align: left; }
+        th { background: #334155; }
+        .user-box { background: #1e293b; padding: 15px; margin-bottom: 15px; border-radius: 6px; border-left: 4px solid #3b82f6; }
+        .file-list { max-height: 140px; overflow-y: auto; padding-left: 0; list-style: none; margin: 5px 0; font-size: 13px; color: #cbd5e1; }
+        .file-item { background: #334155; padding: 8px; margin-bottom: 5px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .file-date { font-size: 11px; color: #94a3b8; }
+        .log-box { background: #020617; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; color: #f87171; max-height: 90px; overflow-y: auto; text-align: left; margin-top: 10px; }
+        .preview-container { margin-top: 15px; background: #0f172a; padding: 10px; border-radius: 6px; text-align: center; border: 1px dashed #475569; }
+        video, img { max-width: 100%; max-height: 200px; border-radius: 4px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="card" id="auth-section">
+        <h2 id="form-title" style="text-align: center; color: #38bdf8;">Your Own Storage</h2>
+        <p style="text-align: center; font-size: 12px; color: #94a3b8; margin-bottom: 20px;">Secure Cloud & Media Vault</p>
+        
+        <input type="text" id="username" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+
+        <div id="register-extra" class="hidden">
+            <input type="text" id="sec-question" placeholder="Security Question (e.g., What is your pet name?)">
+            <input type="text" id="sec-answer" placeholder="Security Answer">
+        </div>
+
+        <div id="forgot-extra" class="hidden">
+            <p id="display-custom-question" style="font-size: 13px; color: #38bdf8; margin: 5px 0;"></p>
+            <input type="text" id="forgot-answer" placeholder="Your Security Answer">
+        </div>
+
+        <button id="auth-btn" onclick="handleAuth()">Login</button>
+
+        <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 13px;">
+            <span id="toggle-text" style="cursor: pointer; color: #38bdf8;" onclick="switchMode('register')">Create Account</span>
+            <span id="forgot-text" style="cursor: pointer; color: #facc15;" onclick="switchMode('forgot')">Forgot Password?</span>
+        </div>
+    </div>
+
+    <div class="card hidden" id="dash-section" style="width: 480px;">
+        <h2>Your Own Storage</h2>
+        <p>Welcome, <span id="display-user"></span></p>
+        
+        <input type="file" id="file-input">
+        <button onclick="uploadFile()">Upload File</button>
+        <p id="status-msg" style="color: #22c55e; font-size: 13px;"></p>
+
+        <hr style="border-color: #334155; margin: 15px 0;">
+        <input type="text" id="user-search-input" placeholder="🔍 Search uploaded files..." onkeyup="filterUserFiles()">
+        
+        <h4 style="margin: 10px 0 5px 0; font-size: 14px;">My Files & Media Preview:</h4>
+        <ul id="user-file-list" class="file-list">
+            <p style="color: #777;">No files uploaded yet.</p>
+        </ul>
+        <button onclick="location.reload()" style="background: #ef4444; margin-top: 15px;">Logout</button>
+    </div>
+
+    <div class="card hidden" id="admin-section" style="width: 700px; background: #111; max-height: 85vh; overflow-y: auto;">
+        <h2 style="color: #ff4444;">🛡️ Super Admin Control Center</h2>
+        <p style="font-size: 12px; color: #888;">(Auto-logout enabled after 3 mins of inactivity)</p>
+        <h3 style="color: #f87171; margin-top: 15px;">🚨 Security & Failed Attempt Logs</h3>
+        <div id="security-log-box" class="log-box">Loading logs...</div>
+        <h3>👥 Registered Users & Credentials</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Password</th>
+                    <th>Security Question & Answer</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="user-table-body"></tbody>
+        </table>
+        <h3 style="margin-top: 25px;">📂 Files Categorized by User</h3>
+        <div id="admin-files-container"></div>
+        <button onclick="location.reload()" style="background: #ef4444; margin-top: 20px;">Admin Logout</button>
+    </div>
+
+    <script>
+        const API = 'http://localhost:5000';
+        let currentMode = 'login';
+        let loggedUser = "";
+        let myUploadedFiles = [];
+        let inactivityTimer;
+
+        async function switchMode(mode) {
+            currentMode = mode;
+            const title = document.getElementById('form-title');
+            const passInput = document.getElementById('password');
+            const regExtra = document.getElementById('register-extra');
+            const forgotExtra = document.getElementById('forgot-extra');
+            const btn = document.getElementById('auth-btn');
+            const toggleText = document.getElementById('toggle-text');
+            const forgotText = document.getElementById('forgot-text');
+
+            if(mode === 'login') {
+                title.innerText = "Your Own Storage";
+                passInput.style.display = 'block';
+                regExtra.classList.add('hidden');
+                forgotExtra.classList.add('hidden');
+                btn.innerText = "Login";
+                toggleText.innerText = "Create Account";
+                toggleText.setAttribute("onclick", "switchMode('register')");
+                forgotText.style.display = 'inline';
+            } else if(mode === 'register') {
+                title.innerText = "Create Account";
+                passInput.style.display = 'block';
+                regExtra.classList.remove('hidden');
+                forgotExtra.classList.add('hidden');
+                btn.innerText = "Register";
+                toggleText.innerText = "Already have an account? Login";
+                toggleText.setAttribute("onclick", "switchMode('login')");
+                forgotText.style.display = 'none';
+            } else if(mode === 'forgot') {
+                const u = document.getElementById('username').value;
+                if(!u) { alert("Please enter your username first!"); return switchMode('login'); }
+                const res = await fetch(API + '/api/get-question', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u }) });
+                const data = await res.json();
+                if(!data.success) { alert(data.message); return switchMode('login'); }
+                document.getElementById('display-custom-question').innerText = `❓ Question: ${data.question}`;
+                title.innerText = "Recover Password";
+                passInput.style.display = 'none';
+                regExtra.classList.add('hidden');
+                forgotExtra.classList.remove('hidden');
+                btn.innerText = "Recover Password";
+                toggleText.innerText = "Back to Login";
+                toggleText.setAttribute("onclick", "switchMode('login')");
+                forgotText.style.display = 'none';
+            }
+        }
+
+        async function handleAuth() {
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            if(currentMode === 'register') {
+                const q = document.getElementById('sec-question').value;
+                const a = document.getElementById('sec-answer').value;
+                const res = await fetch(API + '/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p, question: q, answer: a }) });
+                const data = await res.json();
+                if(data.success) { alert("Account created successfully!"); switchMode('login'); } else { alert(data.message); }
+            } else if(currentMode === 'forgot') {
+                const a = document.getElementById('forgot-answer').value;
+                const res = await fetch(API + '/api/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, answer: a }) });
+                const data = await res.json();
+                if(data.success) { alert(`🔐 Your Password is: ${data.password}`); switchMode('login'); } else { alert(data.message); }
+            } else {
+                const res = await fetch(API + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+                const data = await res.json();
+                if(data.success) {
+                    loggedUser = u;
+                    document.getElementById('auth-section').classList.add('hidden');
+                    if(data.role === 'admin') { document.getElementById('admin-section').classList.remove('hidden'); loadAdminData(); }
+                    else { document.getElementById('dash-section').classList.remove('hidden'); document.getElementById('display-user').innerText = u; fetchUserFiles(); }
+                } else { alert(data.message); }
+            }
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('file-input');
+            if(fileInput.files.length === 0) return alert("Select a file first!");
+            const formData = new FormData();
+            formData.append('username', loggedUser);
+            formData.append('file', fileInput.files[0]);
+            const res = await fetch(API + '/api/upload', { method: 'POST', body: formData });
+            const data = await res.json();
+            if(data.success) { document.getElementById('status-msg').innerText = "File uploaded successfully!"; fileInput.value = ""; fetchUserFiles(); }
+            else { alert("Upload failed!"); }
+        }
+
+        async function fetchUserFiles() {
+            const res = await fetch(API + '/api/admin/data');
+            const data = await res.json();
+            myUploadedFiles = data.files.filter(f => f.user === loggedUser);
+            displayUserFiles(myUploadedFiles);
+        }
+
+        function displayUserFiles(files) {
+            const fileListUl = document.getElementById('user-file-list');
+            fileListUl.innerHTML = '';
+            if(files.length === 0) { fileListUl.innerHTML = `<p style="color: #777;">No files found.</p>`; return; }
+            files.forEach(f => {
+                fileListUl.innerHTML += `<li class="file-item"><div><span>📁 ${f.filename}</span><br><span class="file-date">🕒 ${f.date}</span></div></li>`;
+            });
+        }
+
+        async function loadAdminData() {
+            const logRes = await fetch(API + '/api/admin/logs');
+            const logData = await logRes.json();
+            document.getElementById('security-log-box').innerHTML = logData.logs.join('<br>');
+            const res = await fetch(API + '/api/admin/data');
+            const data = await res.json();
+            const userBody = document.getElementById('user-table-body');
+            userBody.innerHTML = '';
+            for(let user in data.users) {
+                const uInfo = data.users[user];
+                userBody.innerHTML += `<tr><td><b>${user}</b></td><td style="color: #38bdf8;">${uInfo.password}</td><td>Q: ${uInfo.question}<br>A: <b>${uInfo.answer}</b></td><td style="color:#22c55e">${uInfo.status}</td></tr>`;
+            }
+            const filesContainer = document.getElementById('admin-files-container');
+            filesContainer.innerHTML = '';
+            for(let user in data.users) {
+                const userFiles = data.files.filter(f => f.user === user);
+                let fileListHtml = userFiles.length > 0 ? `<ul class="file-list">` + userFiles.map(f => `<li class="file-item"><div><span>📁 ${f.filename}</span><br><span class="file-date">🕒 ${f.date}</span></div></li>`).join('') + `</ul>` : `<p style="color: #777; font-size: 13px;">No files uploaded yet.</p>`;
+                filesContainer.innerHTML += `<div class="user-box"><b style="color: #38bdf8;">👤 User: ${user}</b>${fileListHtml}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

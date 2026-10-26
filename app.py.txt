@@ -1,0 +1,153 @@
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import os
+import asyncio
+from datetime import datetime
+from telethon import TelegramClient
+from dotenv import load_dotenv
+
+load_dotenv()
+
+app = Flask(__name__)
+CORS(app)
+
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+SESSION_NAME = 'your_storage_session'
+
+USERS_DB = {}
+FILES_DB = []
+LOG_FILE = "admin_security.log"
+
+UPLOAD_FOLDER = 'temp_storage'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+
+async def send_file_to_cloud(file_path, caption):
+    await client.start()
+    message = await client.send_file('me', file_path, caption=caption, force_document=True)
+    return message.id
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    question = data.get('question')
+    answer = data.get('answer')
+
+    if username == "ALBASHAR@":
+        return jsonify({"success": False, "message": "Invalid username!"}), 400
+
+    if not username or not password or not question or not answer:
+        return jsonify({"success": False, "message": "All fields including your security question & answer are required!"}), 400
+
+    if username in USERS_DB:
+        return jsonify({"success": False, "message": "User already exists!"}), 400
+
+    USERS_DB[username] = {
+        "password": password, 
+        "question": question.strip(),
+        "answer": answer.lower().strip(),
+        "status": "Active"
+    }
+    return jsonify({"success": True, "message": "Account created successfully!"})
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+
+    if username == "ALBASHAR@":
+        if password == "1234321ALBASHAR":
+            with open(LOG_FILE, "a") as f:
+                f.write(f"[{current_time}] SUCCESS: Admin logged in successfully.\n")
+            return jsonify({"success": True, "role": "admin"})
+        else:
+            with open(LOG_FILE, "a") as f:
+                f.write(f"[{current_time}] SECURITY ALERT: Failed admin login attempt with wrong password!\n")
+            return jsonify({"success": False, "message": "Invalid username or password!"}), 401
+
+    if username in USERS_DB and USERS_DB[username]['password'] == password:
+        return jsonify({"success": True, "role": "user"})
+    
+    return jsonify({"success": False, "message": "Invalid username or password!"}), 401
+
+@app.route('/api/get-question', methods=['POST'])
+def get_question():
+    data = request.json
+    username = data.get('username')
+
+    if username in USERS_DB:
+        return jsonify({"success": True, "question": USERS_DB[username]['question']})
+    
+    return jsonify({"success": False, "message": "Username not found!"}), 404
+
+@app.route('/api/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.json
+    username = data.get('username')
+    answer = data.get('answer')
+
+    if not username or not answer:
+        return jsonify({"success": False, "message": "Username and security answer required!"}), 400
+
+    if username in USERS_DB:
+        user_info = USERS_DB[username]
+        if user_info['answer'] == answer.lower().strip():
+            return jsonify({"success": True, "password": user_info['password']})
+        else:
+            return jsonify({"success": False, "message": "Incorrect security answer!"}), 400
+    
+    return jsonify({"success": False, "message": "Username not found!"}), 404
+
+@app.route('/api/admin/logs', methods=['GET'])
+def get_admin_logs():
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "r") as f:
+            logs = f.readlines()
+        return jsonify({"success": True, "logs": logs})
+    return jsonify({"success": True, "logs": ["No security logs found yet."]})
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    username = request.form.get('username')
+    file = request.files.get('file')
+
+    if username not in USERS_DB:
+        return jsonify({"success": False, "message": "Unauthorized!"}), 401
+
+    if file:
+        filename = file.filename
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(filepath)
+
+        caption = f"📁 Secure Storage File\n👤 User: {username}\n📄 Name: {filename}"
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        cloud_msg_id = loop.run_until_complete(send_file_to_cloud(filepath, caption))
+
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
+        upload_time = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+        FILES_DB.append({
+            "user": username, 
+            "filename": filename, 
+            "date": upload_time,
+            "cloud_id": cloud_msg_id
+        })
+        return jsonify({"success": True, "message": "File uploaded successfully!"})
+
+    return jsonify({"success": False, "message": "No file provided!"}), 400
+
+@app.route('/api/admin/data', methods=['GET'])
+def admin_data():
+    return jsonify({"users": USERS_DB, "files": FILES_DB})
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
